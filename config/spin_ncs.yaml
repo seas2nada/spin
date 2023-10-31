@@ -29,20 +29,29 @@ model:
     randomize_all: False
     randomize_layers: []
     freeze_all: False
-    freeze_layers: ["pos", 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]  # `pos`: positional encoding, `0`: CNN extractor
+    freeze_layers: ["pos", 0]  # `pos`: positional encoding, `0`: CNN extractor
+    # freeze_layers: ["pos", 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]  # `pos`: positional encoding, `0`: CNN extractor
   pred_head:
     type: DNN
     hid_dims: [256]
     dropout: 0
     activation: ReLU
+  semb_head:
+    type: DNN
+    hid_dims: [64]
+    dropout: 0
+    activation: ReLU
   loss:
     type: SwavVQDisentangle
     num_vars: 256  # cluster size
-    epsilon: 0.05
+    epsilon: 0.02
     sinkhorn_iters: 3
     temp: 0.1
     l2_norm: True
     prob_ratio: 1.0
+  cos_loss:
+    type: NegativeCosineSimilarity
+    reduction: "mean"
 
 # Optimization
 optim:
@@ -59,7 +68,8 @@ optim:
       final_lr: 1.e-6
 
 hparam:
-  batch_len: 4096000  # audio samples per GPU (256 secs ~ batch_size = 12.8k)
+  # batch_len: 4096000  # audio samples per GPU (256 secs ~ batch_size = 12.8k)
+  batch_len: 2096000  # audio samples per GPU (256 secs ~ batch_size = 12.8k)
   val_batch_size: 8
 
 # pytorch_lightning.Trainer

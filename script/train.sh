@@ -2,7 +2,8 @@
 
 exp_name=$1
 exp_dir=$2
-config=config/spin.yaml
+config=$3
+# config=config/spin_fz_kbias.yaml
 
 mkdir -p $exp_dir
 

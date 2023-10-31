@@ -56,8 +56,10 @@ pip install -r requirements.txt
 # Modify some s3prl files
 cp s3prl_py/wav2vec2_model.py ../s3prl/s3prl/upstream/wav2vec2/wav2vec2_model.py
 cp s3prl_py/WavLM.py ../s3prl/s3prl/upstream/wavlm/WavLM.py
-```
 
+# Downgrade python-dtw to 1.3.0 for QbE
+pip install python-dtw==1.3.0
+```
 
 ### 2. Prepare Data
 Download required data.

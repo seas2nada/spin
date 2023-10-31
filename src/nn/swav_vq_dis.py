@@ -95,12 +95,149 @@ class SwavVQDisentangle(nn.Module):
     def restore_codebook(self) -> None:
         self.codebook.weight.copy_(self.codebook_copy)
 
+    # def forward(
+    #     self,
+    #     z_1: torch.Tensor,
+    #     z_2: torch.Tensor,
+    # ):
+    #     B = len(z_1)
+
+    #     if self.l2_norm:
+    #         z_1 = F.normalize(z_1, dim=1)
+    #         z_2 = F.normalize(z_2, dim=1)
+
+    #     logits_1: torch.Tensor = self.codebook(z_1)  # (Batch, Num Codes)
+    #     logits_2: torch.Tensor = self.codebook(z_2)  # (Batch, Num Codes)
+
+    #     # Compute targets
+    #     with torch.no_grad():
+    #         tgt_logits_w_1 = logits_1 * self.prob_ratio + logits_2 * (
+    #             1 - self.prob_ratio
+    #         )
+    #         tgt_logits_w_2 = logits_2 * self.prob_ratio + logits_1 * (
+    #             1 - self.prob_ratio
+    #         )
+
+    #         tgt_probs_1 = compute_sinkhorn(
+    #             tgt_logits_w_1.detach(), self.epsilon, self.sinkhorn_iters
+    #         )
+    #         tgt_probs_2 = compute_sinkhorn(
+    #             tgt_logits_w_2.detach(), self.epsilon, self.sinkhorn_iters
+    #         )
+
+    #     # Compute cross-entropy loss
+    #     logits_1.div_(self.temp)
+    #     logits_2.div_(self.temp)
+    #     log_prob_1 = logits_1.log_softmax(1)
+    #     log_prob_2 = logits_2.log_softmax(1)
+
+    #     loss = 0
+    #     if self.hard_target:
+    #         loss_ce = 0.5 * (
+    #             F.cross_entropy(
+    #                 logits_2,
+    #                 tgt_probs_1.argmax(-1),
+    #             )
+    #             + F.cross_entropy(
+    #                 logits_1,
+    #                 tgt_probs_2.argmax(-1),
+    #             )
+    #         )
+    #     else:
+    #         loss_ce = -0.5 * (
+    #             (tgt_probs_1 * log_prob_2).sum(1).mean()
+    #             + (tgt_probs_2 * log_prob_1).sum(1).mean()
+    #         )
+
+    #     loss_em = 0.5 * (
+    #             (tgt_probs_1 * log_prob_1).sum(1).mean()
+    #             + (tgt_probs_2 * log_prob_2).sum(1).mean()
+    #         )
+
+    #     loss += (0.9 * loss_ce + 0.1 * loss_em)
+    #     result = {"loss_ce": loss_ce, "batch_size": B}
+    #     result["loss"] = loss
+
+    #     with torch.no_grad():
+    #         logits = torch.cat([logits_1, logits_2], dim=0)
+    #         _, k = logits.max(-1)
+    #         hard_x = logits.new_zeros(*logits.shape).scatter_(1, k.view(-1, 1), 1.0)
+    #         hard_probs = hard_x.float().mean(0)
+    #         result["code_perplexity"] = (
+    #             torch.exp(-torch.sum(hard_probs * torch.log(hard_probs + 1e-7), dim=-1))
+    #             .sum()
+    #             .cpu()
+    #             .detach()
+    #         )
+
+    #         avg_probs = logits.float().softmax(-1).mean(0)
+    #         result["prob_perplexity"] = (
+    #             torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-7), dim=-1))
+    #             .sum()
+    #             .cpu()
+    #             .detach()
+    #         )
+    #         acc_1 = (
+    #             (torch.argmax(logits_1, dim=1) == torch.argmax(tgt_probs_2, dim=1))
+    #             .float()
+    #             .mean()
+    #             .cpu()
+    #             .detach()
+    #             .item()
+    #         )
+    #         acc_2 = (
+    #             (torch.argmax(logits_2, dim=1) == torch.argmax(tgt_probs_1, dim=1))
+    #             .float()
+    #             .mean()
+    #             .cpu()
+    #             .detach()
+    #             .item()
+    #         )
+    #         result["acc"] = float((acc_1 + acc_2) / 2)
+    #         result["acc_1"] = float(acc_1)
+    #         result["acc_2"] = float(acc_2)
+
+    #     return result
+
+    ### VIC reg
+    def compute_v(self, z):
+        eps = 1e-8
+        gamma = 0.5
+
+        d = z.size(-1)
+        zeros = torch.zeros(d).to(z.device)
+        v_z = (1/d) * torch.sum(torch.max(zeros, gamma - torch.sqrt(torch.var(z, dim=0) + eps)))
+        return v_z
+    
+    def compute_c(self, z):
+        n = z.size(0)
+        d = z.size(1)
+
+        C_z = torch.cov(z.transpose(0,1))
+    
+        # Get the upper and lower triangular parts of C_z, excluding the diagonal
+        C_z_upper = torch.triu(C_z, diagonal=1)
+        C_z_lower = torch.tril(C_z, diagonal=-1)
+        
+        # Compute the sum of squares of the off-diagonal elements
+        sum_val = torch.sum(torch.pow(C_z_upper, 2)) + torch.sum(torch.pow(C_z_lower, 2))
+
+        c_z = (1 / d) * sum_val
+        return c_z
+
     def forward(
         self,
         z_1: torch.Tensor,
         z_2: torch.Tensor,
     ):
         B = len(z_1)
+
+        # var reg
+        v_z1 = self.compute_v(z_1)
+        v_z2 = self.compute_v(z_2)
+        # cov reg
+        c_z1 = self.compute_c(z_1)
+        c_z2 = self.compute_c(z_2)
 
         if self.l2_norm:
             z_1 = F.normalize(z_1, dim=1)
@@ -149,8 +286,15 @@ class SwavVQDisentangle(nn.Module):
                 + (tgt_probs_2 * log_prob_1).sum(1).mean()
             )
 
-        loss += loss_ce
-        result = {"loss_ce": loss_ce, "batch_size": B}
+            # mse_loss = nn.MSELoss()
+            # loss_ce = mse_loss(logits_1, logits_2)
+
+        lambd = 15
+        mu = 0
+        nu = 1
+        loss += lambd * loss_ce + mu * (v_z1 + v_z2) + nu * (c_z1 + c_z2)
+        # loss += (0.9 * loss_ce + 0.1 * loss_em)
+        result = {"loss_ce": loss_ce, "loss_var": v_z1 + v_z2, "loss_cov": c_z1 + c_z2, "batch_size": B}
         result["loss"] = loss
 
         with torch.no_grad():

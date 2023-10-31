@@ -54,8 +54,8 @@ optim:
   scheduler:
     name: linear_warmup_decay  # `linear_warmup_decay` / `linear_warmup_cosine_scheduler` / `noam_scheduler`
     args:
-      warmup: 2500
-      max_step: 5000
+      warmup: 7500
+      max_step: 15000
       final_lr: 1.e-6
 
 hparam:
@@ -65,7 +65,7 @@ hparam:
 # pytorch_lightning.Trainer
 # ref: https://lightning.ai/docs/pytorch/latest/common/trainer.html
 trainer:
-  max_steps: 5000
+  max_steps: 15000
   gradient_clip_val: 10
   accumulate_grad_batches: 1
   precision: 16

@@ -68,6 +68,7 @@ class HuBERT(nn.Module):
         freeze_layers: List[int] = [],
         disable_pos: bool = False,
         masking: bool = False,
+        unfreeze_kbias: List[int] = [],
     ):
         super().__init__()
 
@@ -113,6 +114,7 @@ class HuBERT(nn.Module):
         self.randomize_layers = randomize_layers
         self.freeze_all = freeze_all
         self.freeze_layers = freeze_layers
+        self.unfreeze_kbias = unfreeze_kbias
 
         self.freeze_cnn = (0 in freeze_layers) or self.freeze_all
         self.freeze_pos = ("pos" in freeze_layers) or self.freeze_all
@@ -157,6 +159,21 @@ class HuBERT(nn.Module):
         if self.freeze_cnn:
             self.model.feature_grad_mult = 0.0
 
+        if len(self.unfreeze_kbias) > 0:
+            for i in self.unfreeze_kbias:
+                assert isinstance(i, int), i
+
+                # self.model.encoder.layers[i - 1].self_attn.k_proj.bias.requires_grad_(True)
+                
+                self.model.encoder.layers[i - 1].self_attn.k_proj.requires_grad_(True)
+                self.model.encoder.layers[i - 1].self_attn.v_proj.requires_grad_(True)
+                self.model.encoder.layers[i - 1].self_attn.q_proj.requires_grad_(True)
+
+                # for name, p in self.model.encoder.layers[i - 1].self_attn.k_proj.named_parameters():
+                #     if "bias" in name:
+                #         nn.init.normal_(p, mean=0, std=0.02)
+                # self.model.encoder.layers[i - 1].self_attn.k_proj.requires_grad_(True)
+
         self.model.remove_pretraining_modules()
 
     def trainable_parameters(self):
@@ -184,6 +201,14 @@ class HuBERT(nn.Module):
                 params += list(self.model.encoder.layers[i - 1].parameters())
                 if i == self.num_layers - 1 and self.model.encoder.layer_norm_first:
                     params += list(self.model.encoder.layer_norm.parameters())
+
+        if len(self.unfreeze_kbias) > 0:
+            for i in self.unfreeze_kbias:
+                params += list(self.model.encoder.layers[i - 1].self_attn.k_proj.parameters())
+                params += list(self.model.encoder.layers[i - 1].self_attn.v_proj.parameters())
+                params += list(self.model.encoder.layers[i - 1].self_attn.q_proj.parameters())
+            # for i in self.unfreeze_kbias:
+            #     params += [self.model.encoder.layers[i - 1].self_attn.k_proj.bias]
 
         if self.masking:
             params += list(self.model.mask_emb.parameters())

@@ -14,7 +14,7 @@ from src.data import (
     MaxLengthDistributedSampler,
     collate_fn,
 )
-from src.nn import DNN, HuBERT, SwavVQDisentangle, WavLM
+from src.nn import DNN, HuBERT, SwavVQDisentangle, WavLM, NegativeCosineSimilarityLoss
 from src.util import compute_show_pnmi, get_scheduler, update_padding_mask
 
 from .base import BaseModel
@@ -33,6 +33,8 @@ def get_pred_head(type_name: str, hid_dim: int, config: dict) -> Union[None, nn.
 def get_loss(type_name: str, hid_dim: int, config: dict) -> nn.Module:
     if type_name == "SwavVQDisentangle":
         return SwavVQDisentangle(hid_dim, **config)
+    elif type_name == "NegativeCosineSimilarity":
+        return NegativeCosineSimilarityLoss(**config)
     raise NotImplementedError(type_name)
 
 
@@ -59,6 +61,7 @@ class SpinModel(BaseModel):
 
         # Setup encoder model
         if self.encoder_type in {"HuBERT", "WavLM"}:
+            self.distill_layers = config["encoder"].pop("distill_layers", [1,4,8])
             self.use_layer = config["encoder"].pop("use_layer", 12)
             self.encoder = eval(self.encoder_type)(**config["encoder"])
             hid_dim = self.encoder.hidden_sizes[self.use_layer]
@@ -85,6 +88,18 @@ class SpinModel(BaseModel):
                 ]
             )
             hid_dim = self.pred_head[0].out_dim
+
+        # Setup speaker embedding extraction head
+        if "semb_head" in config.keys():
+            semb_dim = self.encoder.hidden_sizes[1]
+            self.semb_head = get_pred_head(
+                config["semb_head"].pop("type", "DNN"), semb_dim, config["semb_head"]
+            )
+            semb_dim = self.semb_head.out_dim
+            self.ncs_loss = get_loss(config["cos_loss"].pop("type", "NegativeCosineSimilarity"), 0, config["cos_loss"])
+        else:
+            self.semb_head = None
+            self.ncs_loss = None
 
         # Setup loss function
         self.loss_module = get_loss(self.loss_type, hid_dim, config["loss"])
@@ -140,6 +155,21 @@ class SpinModel(BaseModel):
         )
         padding_mask = update_padding_mask(padding_mask, repr_list[0].shape[1])
 
+        # Speaker embedding head
+        if self.semb_head is not None:
+            semb = self.semb_head(feat_list[1], None)
+            semb = torch.mean(semb, dim=1)
+
+            semb_views = [
+            semb[i :: self.num_view] for i in range(self.num_view)
+            ]
+
+        # Layer-wise distillation
+        if len(self.distill_layers) > 0:
+            distill_repr_list = [feat_list[l] for l in self.distill_layers]
+        else:
+            distill_repr_list = []
+
         # Prediction head
         repr_list = [
             self.forward_pred_head(repr, feat_len, i)
@@ -158,7 +188,7 @@ class SpinModel(BaseModel):
                 if self.loss_module.l2_norm:
                     outputs["repr_list"] = F.normalize(repr_list[0], dim=-1)
                 logits, codes = self.loss_module.produce_targets(
-                    outputs["repr_list"], normalized=True
+                    repr_list[0], normalized=True
                 )
                 outputs["logits"] = logits
                 outputs["codes"] = codes
@@ -180,14 +210,39 @@ class SpinModel(BaseModel):
         loss_res = defaultdict(list)
 
         # Main loss
+        # if self.loss_type in {"SwavVQDisentangle"}:
+        #     res = self.loss_module.cal_loss(repr_views[0][0], repr_views[1][0])
+        #     res2 = self.loss_module.cal_loss(repr_views[0][0], repr_views[2][0])
+        #     res3 = self.loss_module.cal_loss(repr_views[1][0], repr_views[2][0])
+        # total_loss += res.pop("loss")
+        # total_loss += res2.pop("loss")
+        # total_loss += res3.pop("loss")
         if self.loss_type in {"SwavVQDisentangle"}:
             res = self.loss_module.cal_loss(repr_views[0][0], repr_views[1][0])
         total_loss += res.pop("loss")
         for k in res:
             loss_res[f"{k}"].append(res[k])
-
         for k in loss_res:
             loss_res[k] = sum(loss_res[k]) / len(loss_res[k])
+        
+        # Speaker cos sim loss
+        if self.semb_head is not None:
+            ncs_loss = self.ncs_loss(semb_views[0], semb_views[1])
+            total_loss += ncs_loss
+            loss_res['cos_sim'] = ncs_loss
+
+        # Layer-wise distill loss
+        if len(distill_repr_list) > 0:
+            distill_repr_views = [
+            [
+                r[i :: self.num_view][~padding_mask[i :: self.num_view]]
+                for r in distill_repr_list
+            ]
+            for i in range(self.num_view)
+            ]
+            for distill_repr_view in distill_repr_views:
+                distill_loss = F.mse_loss(distill_repr_view[0][0], distill_repr_view[1][0])
+                total_loss += distill_loss
 
         return total_loss, loss_res
 

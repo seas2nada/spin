@@ -64,6 +64,8 @@ class AudioPretrainDataset(Dataset):
         self.normalize = normalize
         self.sample_rate = sample_rate
         self.nansy_aug = spk2info is not None
+        
+        self.nansy_aug = True
 
         if self.nansy_aug:
             # Load speaker information
@@ -155,12 +157,52 @@ class AudioPretrainDataset(Dataset):
                     for _ in range(self.num_view)
                 ]
             else:
-                wavs = [wav] + [
-                    self.perturb_speaker(path, wav, sr, spk)
-                    for _ in range(self.num_view - 1)
-                ]
+                # wavs = [wav] + [
+                #     self.perturb_speaker(path, wav, sr, spk)
+                #     for _ in range(self.num_view - 1)
+                # ]
+
+                aug_wav = self.perturb_speaker(path, wav, sr, spk)
+                
+                ### chunk mask ###
+                spec_prob = 0.25
+                max_spec_len = int(spec_prob * len(aug_wav))
+                min_idx = 0
+                max_idx = int((1 - spec_prob) * len(aug_wav))
+                spec_idx = np.random.randint(min_idx, max_idx)
+                spec_len = max_spec_len
+                aug_wav[spec_idx:spec_idx + spec_len] = 0.0
+
+                ### var mask ###
+                # spec_prob = 0.2
+                # max_spec_len = int(spec_prob * len(aug_wav))
+                # # spec_len = np.random.choice([20, 100, 500, max_spec_len])
+                # spec_len = np.random.choice([100, 500, max_spec_len])
+                # num_masks = int(max_spec_len / spec_len)
+                # for masked in range(num_masks):
+                #     min_idx = int((masked / num_masks) * len(aug_wav))
+                #     max_idx = min_idx + 1 if masked + 1 == num_masks else int(((masked + 1) / num_masks) * len(aug_wav))
+                #     spec_idx = np.random.randint(min_idx, max_idx)
+                #     aug_wav[spec_idx:spec_idx + spec_len] = 0.0
+
+
+                wavs = [wav] + [aug_wav]
+                
+                ### add noise ###
+                # aug_wav = self.perturb_speaker(path, wav, sr, spk)
+                # noise = np.random.normal(loc=0, scale=1, size=wav.shape)
+                # # Computing the required SNR
+                # snr_db = np.random.uniform(15, 25)
+                # signal_rms = np.sqrt(np.mean(aug_wav ** 2))
+                # noise_rms = signal_rms / (10 ** (snr_db / 20.0))
+                # scaled_noise = noise * noise_rms / np.std(noise)
+                # # Mixing speech with noise
+                # aug_wav += noise
+                # wavs = [wav] + [aug_wav]
+                
         else:
-            wavs = [wav for _ in range(self.num_view)]
+            # wavs = [wav for _ in range(self.num_view)]
+            wavs = [wav] + [wav]
 
         wavs = [torch.FloatTensor(w) for w in wavs]
         if self.normalize:
