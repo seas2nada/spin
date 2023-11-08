@@ -49,6 +49,8 @@ class AudioPretrainDataset(Dataset):
         use_ratio: float = 1.0,
         normalize: bool = False,
         nansy_both: bool = False,
+        mask_prob: float = 0.25,
+        num_masks: int = 1,
     ) -> None:
         super().__init__()
 
@@ -65,7 +67,8 @@ class AudioPretrainDataset(Dataset):
         self.sample_rate = sample_rate
         self.nansy_aug = spk2info is not None
         
-        self.nansy_aug = True
+        self.mask_prob = mask_prob
+        self.num_masks = num_masks
 
         if self.nansy_aug:
             # Load speaker information
@@ -165,17 +168,18 @@ class AudioPretrainDataset(Dataset):
                 aug_wav = self.perturb_speaker(path, wav, sr, spk)
                 
                 ### chunk mask ###
-                spec_prob = 0.25
-                max_spec_len = int(spec_prob * len(aug_wav))
-                min_idx = 0
-                max_idx = int((1 - spec_prob) * len(aug_wav))
-                spec_idx = np.random.randint(min_idx, max_idx)
-                spec_len = max_spec_len
-                aug_wav[spec_idx:spec_idx + spec_len] = 0.0
+                if self.mask_prob > 0.0:
+                    pre_max_idx = 0
+                    spec_len = int(self.mask_prob * len(aug_wav) / self.num_masks)
+                    for _ in range(self.num_masks):
+                        min_idx = pre_max_idx
+                        max_idx = min_idx + int((1 - self.mask_prob) * len(aug_wav) / self.num_masks)
+                        spec_idx = np.random.randint(min_idx, max_idx)
+                        aug_wav[spec_idx:spec_idx + spec_len] = 0.0
+                        pre_max_idx = max_idx
 
                 ### var mask ###
-                # spec_prob = 0.2
-                # max_spec_len = int(spec_prob * len(aug_wav))
+                # max_spec_len = int(self.mask_prob * len(aug_wav))
                 # # spec_len = np.random.choice([20, 100, 500, max_spec_len])
                 # spec_len = np.random.choice([100, 500, max_spec_len])
                 # num_masks = int(max_spec_len / spec_len)

@@ -71,7 +71,8 @@ class SpinModel(BaseModel):
             raise NotImplementedError(self.encoder_type)
 
         # All layers to be processed
-        self.use_layers = [self.use_layer]
+        # self.use_layers = [self.use_layer]
+        self.use_layers = list(range(config["encoder"]["freeze_layers"][-1] + 1, 12))
         logger.info(f"All selected layers: {self.use_layers}")
 
         # Setup prediction head
@@ -210,16 +211,14 @@ class SpinModel(BaseModel):
         loss_res = defaultdict(list)
 
         # Main loss
-        # if self.loss_type in {"SwavVQDisentangle"}:
-        #     res = self.loss_module.cal_loss(repr_views[0][0], repr_views[1][0])
-        #     res2 = self.loss_module.cal_loss(repr_views[0][0], repr_views[2][0])
-        #     res3 = self.loss_module.cal_loss(repr_views[1][0], repr_views[2][0])
-        # total_loss += res.pop("loss")
-        # total_loss += res2.pop("loss")
-        # total_loss += res3.pop("loss")
         if self.loss_type in {"SwavVQDisentangle"}:
-            res = self.loss_module.cal_loss(repr_views[0][0], repr_views[1][0])
-        total_loss += res.pop("loss")
+            # res = self.loss_module.cal_loss(repr_views[0][0], repr_views[1][0])
+            
+            for i in range(len(repr_views[0])):
+                res = self.loss_module.cal_loss(repr_views[0][i], repr_views[1][i])
+                total_loss += res.pop("loss")
+
+        # total_loss += res.pop("loss")
         for k in res:
             loss_res[f"{k}"].append(res[k])
         for k in loss_res:

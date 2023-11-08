@@ -54,6 +54,10 @@ class SwavVQDisentangle(nn.Module):
         l2_norm: bool = True,
         hard_target: bool = False,
         prob_ratio: float = 1.0,
+        lambd: float = 15.0,
+        mu: float = 0.0,
+        nu: float = 1.0,
+        gamma: float = 0.2,
     ) -> None:
         super().__init__()
 
@@ -65,6 +69,10 @@ class SwavVQDisentangle(nn.Module):
         self.l2_norm = l2_norm
         self.hard_target = hard_target
         self.prob_ratio = prob_ratio
+        self.lambd = lambd
+        self.mu = mu
+        self.nu = nu
+        self.gamma = gamma
 
         logger.info(f"Codebook size: {num_vars}")
         self.codebook = nn.Linear(dim, num_vars, bias=False)
@@ -202,11 +210,10 @@ class SwavVQDisentangle(nn.Module):
     ### VIC reg
     def compute_v(self, z):
         eps = 1e-8
-        gamma = 0.5
 
         d = z.size(-1)
         zeros = torch.zeros(d).to(z.device)
-        v_z = (1/d) * torch.sum(torch.max(zeros, gamma - torch.sqrt(torch.var(z, dim=0) + eps)))
+        v_z = (1/d) * torch.sum(torch.max(zeros, self.gamma - torch.sqrt(torch.var(z, dim=0) + eps)))
         return v_z
     
     def compute_c(self, z):
@@ -233,11 +240,17 @@ class SwavVQDisentangle(nn.Module):
         B = len(z_1)
 
         # var reg
-        v_z1 = self.compute_v(z_1)
-        v_z2 = self.compute_v(z_2)
+        if self.mu != 0:
+            v_z1 = self.compute_v(z_1)
+            v_z2 = self.compute_v(z_2)
+        else:
+            v_z1, v_z2 = 0, 0
         # cov reg
-        c_z1 = self.compute_c(z_1)
-        c_z2 = self.compute_c(z_2)
+        if self.nu != 0:
+            c_z1 = self.compute_c(z_1)
+            c_z2 = self.compute_c(z_2)
+        else:
+            c_z1, c_z2 = 0, 0
 
         if self.l2_norm:
             z_1 = F.normalize(z_1, dim=1)
@@ -286,14 +299,7 @@ class SwavVQDisentangle(nn.Module):
                 + (tgt_probs_2 * log_prob_1).sum(1).mean()
             )
 
-            # mse_loss = nn.MSELoss()
-            # loss_ce = mse_loss(logits_1, logits_2)
-
-        lambd = 15
-        mu = 0
-        nu = 1
-        loss += lambd * loss_ce + mu * (v_z1 + v_z2) + nu * (c_z1 + c_z2)
-        # loss += (0.9 * loss_ce + 0.1 * loss_em)
+        loss += self.lambd * loss_ce + self.mu * (v_z1 + v_z2) + self.nu * (c_z1 + c_z2)
         result = {"loss_ce": loss_ce, "loss_var": v_z1 + v_z2, "loss_cov": c_z1 + c_z2, "batch_size": B}
         result["loss"] = loss
 

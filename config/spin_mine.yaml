@@ -87,4 +87,4 @@ checkpoint:
 # pytorch_lightning.loggers.WandbLogger
 # ref: https://lightning.ai/docs/pytorch/latest/extensions/generated/lightning.pytorch.loggers.WandbLogger.html
 logger:
-  project: spin_is2023
+  project: spin_asml04
